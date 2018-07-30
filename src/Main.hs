@@ -13,7 +13,7 @@ import Options.Applicative
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Map as Map
 import Data.Map (Map)
-import Data.List (foldl', sortOn, partition)
+import Data.List (foldl', sortOn, partition, sort)
 import Text.Pretty.Simple
 import Numeric.Natural (Natural)
 
@@ -36,26 +36,34 @@ main = do
   let stats = getStats <$> wmod
       wmod = decodeModuleLazy wasmFile
   let
-    (Right (_,(_,(fs)))) =
-      (over (_2 . _2) (id)
-       . head . reverse
-       . (sortOn (fst . snd))
-       . Map.toList
-       . funcSizeDistribution) <$> stats
+    (Right dist) =
+       (funcSizeDistribution) <$> stats
 
-    bins = findBins doExprDiff fs
+    fsGrps = take 100 . reverse
+       . (sortOn (fst . snd))
+       . Map.toList $ dist
+
+    bins = over (each . _2 . _2)
+      (findBins doExprDiff) fsGrps
+
     doExprDiff (Function _ _ b1) (Function _ _ b2) = case exprDiff b1 b2 of
       NoDiff -> True
       MinorDiff _ -> True
       VeryDifferent _ -> False
 
-  pPrint $ zip [1..] $ map (length) bins
+    binLengths = over (each . _2 . _2) (take 5 . reverse . sort . (map length)) bins
+
+  mapM_ printResult binLengths
   -- pPrintNoColor $ f
   -- pPrintNoColor $ take 4 $ drop 22 fs
 
+printResult ((s, _, _), (c,ls)) = do
+  putStrLn $ show s ++ " x " ++ show c ++ " : " ++ show ls
+
 findBins :: (a -> a -> Bool) -> [a] -> [[a]]
 findBins _ [] = []
-findBins g (f:fs) = (f:a) : (findBins g b)
+findBins g (f:fs) = (f:a) :
+  if (length b > 100) then (findBins g b) else []
   where (a,b) = partition (g f) fs
 
 newtype Count = Count Int
