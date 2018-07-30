@@ -19,6 +19,7 @@ executable wasm-optimize
   main-is:             Main.hs
   -- other-modules:
   -- other-extensions:
+  ghc-options:         -threaded
   build-depends:       base >=4.10 && <4.13
                        , lens
                        , wasm

@@ -13,7 +13,7 @@ import Options.Applicative
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Map as Map
 import Data.Map (Map)
-import Data.List (foldl', sortOn)
+import Data.List (foldl', sortOn, partition)
 import Text.Pretty.Simple
 import Numeric.Natural (Natural)
 
@@ -36,17 +36,27 @@ main = do
   let stats = getStats <$> wmod
       wmod = decodeModuleLazy wasmFile
   let
-    (Right (_,(_,(f:fs)))) =
-      (over (_2 . _2) (take 50)
+    (Right (_,(_,(fs)))) =
+      (over (_2 . _2) (id)
        . head . reverse
        . (sortOn (fst . snd))
        . Map.toList
        . funcSizeDistribution) <$> stats
 
-    doExprDiff (Function _ _ b1) (Function _ _ b2) = exprDiff b1 b2
-  pPrint $ zip [1..] $ map (doExprDiff f) fs
+    bins = findBins doExprDiff fs
+    doExprDiff (Function _ _ b1) (Function _ _ b2) = case exprDiff b1 b2 of
+      NoDiff -> True
+      MinorDiff _ -> True
+      VeryDifferent _ -> False
+
+  pPrint $ zip [1..] $ map (length) bins
   -- pPrintNoColor $ f
   -- pPrintNoColor $ take 4 $ drop 22 fs
+
+findBins :: (a -> a -> Bool) -> [a] -> [[a]]
+findBins _ [] = []
+findBins g (f:fs) = (f:a) : (findBins g b)
+  where (a,b) = partition (g f) fs
 
 newtype Count = Count Int
   deriving (Show, Ord, Eq, Num)
@@ -81,7 +91,7 @@ getExpSize (i:is) = e + (getExpSize is)
 
 
 data Diff
-  = VeryDifferent
+  = VeryDifferent [(Instruction Natural, Instruction Natural)]
   | MinorDiff [(Instruction Natural, Instruction Natural)]
   | NoDiff
   deriving (Show)
@@ -96,17 +106,20 @@ exprDiff f1 f2 = loop f1 f2
       MinorDiff ds -> case (loop is1 is2) of
         NoDiff -> MinorDiff ds
         MinorDiff ds2 -> MinorDiff (ds ++ ds2)
-        VeryDifferent -> VeryDifferent
-      VeryDifferent -> VeryDifferent
+        VeryDifferent ds2 -> VeryDifferent ds2
+      VeryDifferent ds2 -> VeryDifferent ds2
     loop _ _ = error "loop got different lengths?"
 
     g (i1@(Block w1 b1)) (i2@(Block w2 b2)) =
       if (w1 == w2)
         then exprDiff b1 b2
-        else VeryDifferent
+        else VeryDifferent []
 
     g (i1@(I32Const w1)) (i2@(I32Const w2)) =
       if (w1 == w2) then NoDiff else MinorDiff [(i1,i2)]
 
+    -- g (i1@(I32Load w1)) (i2@(I32Load w2)) =
+    --   if (w1 == w2) then NoDiff else MinorDiff [(i1,i2)]
+
     g i1 i2 =
-      if (i1 == i2) then NoDiff else VeryDifferent
+      if (i1 == i2) then NoDiff else VeryDifferent [(i1,i2)]
